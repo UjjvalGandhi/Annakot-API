@@ -1,0 +1,847 @@
+openapi: 3.0.3
+info:
+  title: Ankoot API
+  description: API for Ankoot food and prasad management system
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@ankoot.com
+
+servers:
+  - url: http://localhost:3690
+    description: Development server
+  - url: https://api.ankoot.com
+    description: Production server
+
+paths:
+  /login:
+    post:
+      summary: User Login with Mobile Number
+      description: Login user using mobile number verification
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - user_mobile
+              properties:
+                user_mobile:
+                  type: string
+                  description: User mobile number
+                  example: "9876543210"
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  msg:
+                    type: string
+                    example: "Login successful"
+                  user:
+                    type: object
+                    properties:
+                      user_id:
+                        type: integer
+                        example: 1
+                      user_name:
+                        type: string
+                        example: "John Doe"
+                      user_mobile:
+                        type: string
+                        example: "9876543210"
+                      user_type:
+                        type: string
+                        enum: [admin, user, volunteer]
+                        example: "admin"
+                      user_role:
+                        type: string
+                        example: "super_admin"
+                      status:
+                        type: string
+                        enum: [active, inactive, deleted]
+                        example: "active"
+                      cdt:
+                        type: string
+                        format: date-time
+                        example: "2024-01-01T00:00:00.000Z"
+                      udt:
+                        type: string
+                        format: date-time
+                        example: "2024-01-01T00:00:00.000Z"
+                  token:
+                    type: string
+                    example: "jwt_access_token_here"
+                  refreshToken:
+                    type: string
+                    example: "jwt_refresh_token_here"
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Mobile number is required."
+        '404':
+          description: User not found
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Mobile number not found or user is inactive."
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: false
+                  message:
+                    type: string
+                    example: "Internal server error"
+
+  /insertData:
+    post:
+      summary: Insert Data into Table
+      description: Insert new record into any table
+      tags:
+        - General CRUD
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - table
+              properties:
+                table:
+                  type: string
+                  description: Table name
+                  example: "user"
+                user_name:
+                  type: string
+                  example: "John Doe"
+                user_mobile:
+                  type: string
+                  example: "9876543210"
+                user_password:
+                  type: string
+                  example: "password123"
+                user_type:
+                  type: string
+                  enum: [admin, user, volunteer]
+                  example: "user"
+      responses:
+        '200':
+          description: Data inserted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  msg:
+                    type: string
+                    example: "user data inserted successfully."
+                  id:
+                    type: integer
+                    example: 1
+
+  /updateData:
+    post:
+      summary: Update Data in Table
+      description: Update existing record in any table
+      tags:
+        - General CRUD
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - table
+                - id
+              properties:
+                table:
+                  type: string
+                  description: Table name
+                  example: "user"
+                id:
+                  type: integer
+                  description: Record ID to update
+                  example: 1
+                user_name:
+                  type: string
+                  example: "John Doe Updated"
+                user_type:
+                  type: string
+                  enum: [admin, user, volunteer]
+                  example: "admin"
+      responses:
+        '200':
+          description: Data updated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: object
+                    properties:
+                      user_id:
+                        type: integer
+                        example: 1
+                      user_name:
+                        type: string
+                        example: "John Doe Updated"
+
+  /getData:
+    post:
+      summary: Get Data from Table
+      description: Retrieve data from any table with optional filters
+      tags:
+        - General CRUD
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - table
+              properties:
+                table:
+                  type: string
+                  description: Table name
+                  example: "user"
+                filters:
+                  type: object
+                  description: Filter conditions
+                  properties:
+                    status:
+                      type: string
+                      enum: [active, inactive, deleted]
+                      example: "active"
+                    user_type:
+                      type: string
+                      enum: [admin, user, volunteer]
+                      example: "admin"
+      responses:
+        '200':
+          description: Data retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        user_id:
+                          type: integer
+                          example: 1
+                        user_name:
+                          type: string
+                          example: "John Doe"
+                        user_mobile:
+                          type: string
+                          example: "9876543210"
+
+  /deleteData:
+    post:
+      summary: Delete Data from Table
+      description: Delete record from any table
+      tags:
+        - General CRUD
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - table
+                - id
+              properties:
+                table:
+                  type: string
+                  description: Table name
+                  example: "user"
+                id:
+                  type: integer
+                  description: Record ID to delete
+                  example: 1
+      responses:
+        '200':
+          description: Data deleted successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  message:
+                    type: string
+                    example: "Record deleted successfully."
+
+  /getItem:
+    post:
+      summary: Get Food Items with Total Quantities
+      description: Retrieve food items with their total stock quantities
+      tags:
+        - Food Items
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                food_item_id:
+                  type: integer
+                  description: Specific food item ID
+                  example: 1
+                event_id:
+                  type: integer
+                  description: Filter by event ID
+                  example: 1
+      responses:
+        '200':
+          description: Food items retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  msg:
+                    type: string
+                    example: "Food item with total quantity retrieved successfully"
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        food_item_id:
+                          type: integer
+                          example: 2
+                        food_eng_name:
+                          type: string
+                          example: "Kaju Katri"
+                        food_guj_name:
+                          type: string
+                          example: "કાજુ કતરી"
+                        food_unit:
+                          type: string
+                          example: "KG"
+                        food_image_url:
+                          type: string
+                          nullable: true
+                          example: null
+                        food_category:
+                          type: string
+                          nullable: true
+                          example: null
+                        food_remark:
+                          type: string
+                          nullable: true
+                          example: null
+                        status:
+                          type: string
+                          enum: [active, inactive, deleted]
+                          example: "active"
+                        cdt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                          example: null
+                        udt:
+                          type: string
+                          format: date-time
+                          nullable: true
+                          example: null
+                        total_qty:
+                          type: number
+                          example: 15
+                        stock_records_count:
+                          type: integer
+                          example: 2
+
+  /getItemStock:
+    post:
+      summary: Get Pradesh-wise Stock Totals by Food Item
+      description: Get pradesh-wise total stock quantities for food items
+      tags:
+        - Food Stock
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                food_item_id:
+                  type: integer
+                  description: Specific food item ID
+                  example: 1
+                event_id:
+                  type: integer
+                  description: Filter by event ID
+                  example: 1
+      responses:
+        '200':
+          description: Pradesh-wise stock totals retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  msg:
+                    type: string
+                    example: "Food item pradesh-wise stock totals retrieved successfully"
+                  food_item:
+                    type: object
+                    properties:
+                      food_item_id:
+                        type: integer
+                        example: 1
+                      food_eng_name:
+                        type: string
+                        example: "Rice"
+                      food_guj_name:
+                        type: string
+                        example: "ચોખા"
+                      food_unit:
+                        type: string
+                        example: "kg"
+                      food_category:
+                        type: string
+                        example: "grains"
+                  pradesh_stock:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        pradesh_id:
+                          type: integer
+                          example: 1
+                        pradesh_eng_name:
+                          type: string
+                          example: "Gujarat"
+                        pradesh_guj_name:
+                          type: string
+                          example: "ગુજરાત"
+                        total_qty:
+                          type: number
+                          example: 75.50
+                        totalassigned:
+                          type: number
+                          example: 100.00
+                        stock_records_count:
+                          type: integer
+                          example: 2
+                  total_pradesh_count:
+                    type: integer
+                    example: 1
+
+  /getPradeshItems:
+    post:
+      summary: Get Pradesh-wise Items with Stock Totals
+      description: Get pradesh-wise items with their stock assigned and total quantities
+      tags:
+        - Pradesh Items
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                pradesh_id:
+                  type: integer
+                  description: Specific pradesh ID
+                  example: 1
+                event_id:
+                  type: integer
+                  description: Filter by event ID
+                  example: 1
+      responses:
+        '200':
+          description: Pradesh items with stock totals retrieved successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  success:
+                    type: boolean
+                    example: true
+                  msg:
+                    type: string
+                    example: "Pradesh items with stock totals retrieved successfully"
+                  pradesh:
+                    type: object
+                    properties:
+                      pradesh_id:
+                        type: integer
+                        example: 1
+                      pradesh_eng_name:
+                        type: string
+                        example: "Gujarat"
+                      pradesh_guj_name:
+                        type: string
+                        example: "ગુજરાત"
+                      status:
+                        type: string
+                        enum: [active, inactive, deleted]
+                        example: "active"
+                  items:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        food_item_id:
+                          type: integer
+                          example: 1
+                        food_eng_name:
+                          type: string
+                          example: "Rice"
+                        food_guj_name:
+                          type: string
+                          example: "ચોખા"
+                        food_unit:
+                          type: string
+                          example: "kg"
+                        food_category:
+                          type: string
+                          example: "grains"
+                        total_qty:
+                          type: number
+                          example: 75.50
+                        totalassigned:
+                          type: number
+                          example: 100.00
+                        stock_records_count:
+                          type: integer
+                          example: 3
+                  total_items_count:
+                    type: integer
+                    example: 2
+
+components:
+  schemas:
+    User:
+      type: object
+      properties:
+        user_id:
+          type: integer
+          example: 1
+        user_name:
+          type: string
+          example: "John Doe"
+        user_mobile:
+          type: string
+          example: "9876543210"
+        user_password:
+          type: string
+          example: "hashed_password"
+        user_type:
+          type: string
+          enum: [admin, user, volunteer]
+          example: "admin"
+        user_role:
+          type: string
+          example: "super_admin"
+        status:
+          type: string
+          enum: [active, inactive, deleted]
+          example: "active"
+        cdt:
+          type: string
+          format: date-time
+          example: "2024-01-01T00:00:00.000Z"
+        udt:
+          type: string
+          format: date-time
+          example: "2024-01-01T00:00:00.000Z"
+
+    Pradesh:
+      type: object
+      properties:
+        pradesh_id:
+          type: integer
+          example: 1
+        pradesh_eng_name:
+          type: string
+          example: "Gujarat"
+        pradesh_guj_name:
+          type: string
+          example: "ગુજરાત"
+        pradesh_old_eng_name:
+          type: string
+          nullable: true
+          example: "Gujarat State"
+        pradesh_new_guj_name:
+          type: string
+          nullable: true
+          example: "ગુજરાત રાજ્ય"
+        user_ids:
+          type: string
+          nullable: true
+          example: "1,2,3"
+        status:
+          type: string
+          enum: [active, inactive, deleted]
+          example: "active"
+        cdt:
+          type: string
+          format: date-time
+          example: "2024-01-01T00:00:00.000Z"
+        udt:
+          type: string
+          format: date-time
+          example: "2024-01-01T00:00:00.000Z"
+
+    Event:
+      type: object
+      properties:
+        event_id:
+          type: integer
+          example: 1
+        event_name:
+          type: string
+          example: "Annual Festival"
+        event_desc:
+          type: string
+          nullable: true
+          example: "Annual community festival celebration"
+        event_location:
+          type: string
+          nullable: true
+          example: "Community Center"
+        event_max_prasad_date:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2024-01-20T00:00:00.000Z"
+        event_date:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2024-01-15T00:00:00.000Z"
+        event_item_last_date:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2024-01-10T00:00:00.000Z"
+        is_prasad_active:
+          type: boolean
+          nullable: true
+          example: true
+        status:
+          type: string
+          enum: [active, inactive, deleted]
+          example: "active"
+        cdt:
+          type: string
+          format: date-time
+          example: "2024-01-01T00:00:00.000Z"
+        udt:
+          type: string
+          format: date-time
+          example: "2024-01-01T00:00:00.000Z"
+
+    FoodItem:
+      type: object
+      properties:
+        food_item_id:
+          type: integer
+          example: 1
+        food_eng_name:
+          type: string
+          example: "Rice"
+        food_guj_name:
+          type: string
+          example: "ચોખા"
+        food_unit:
+          type: string
+          nullable: true
+          example: "kg"
+        food_image_url:
+          type: string
+          nullable: true
+          example: "https://example.com/rice.jpg"
+        food_category:
+          type: string
+          nullable: true
+          example: "grains"
+        food_remark:
+          type: string
+          nullable: true
+          example: "Basmati rice preferred"
+        status:
+          type: string
+          enum: [active, inactive, deleted]
+          example: "active"
+        cdt:
+          type: string
+          format: date-time
+          example: "2024-01-01T00:00:00.000Z"
+        udt:
+          type: string
+          format: date-time
+          example: "2024-01-01T00:00:00.000Z"
+
+    FoodStock:
+      type: object
+      properties:
+        event_id:
+          type: integer
+          example: 1
+        pradesh_id:
+          type: integer
+          example: 1
+        food_item_id:
+          type: integer
+          example: 1
+        food_qty:
+          type: number
+          format: decimal
+          example: 50.00
+        person_mobile:
+          type: string
+          nullable: true
+          example: "9876543210"
+        person_name:
+          type: string
+          nullable: true
+          example: "John Doe"
+        status:
+          type: string
+          enum: [active, inactive, deleted]
+          example: "active"
+        cdt:
+          type: string
+          format: date-time
+          example: "2024-01-01T00:00:00.000Z"
+        udt:
+          type: string
+          format: date-time
+          example: "2024-01-01T00:00:00.000Z"
+
+    PrasadStock:
+      type: object
+      properties:
+        event_id:
+          type: integer
+          example: 1
+        pradesh_id:
+          type: integer
+          example: 1
+        prasad_box_qty:
+          type: number
+          format: decimal
+          example: 25.00
+        prasad_packet_qty:
+          type: number
+          format: decimal
+          example: 100.00
+        person_mobile:
+          type: string
+          nullable: true
+          example: "9876543210"
+        person_name:
+          type: string
+          nullable: true
+          example: "John Doe"
+        user_id:
+          type: integer
+          nullable: true
+          example: 1
+        status:
+          type: string
+          enum: [active, inactive, deleted]
+          example: "active"
+        cdt:
+          type: string
+          format: date-time
+          example: "2024-01-01T00:00:00.000Z"
+        udt:
+          type: string
+          format: date-time
+          example: "2024-01-01T00:00:00.000Z"
+
+    ErrorResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: "Error message here"
+
+    SuccessResponse:
+      type: object
+      properties:
+        success:
+          type: boolean
+          example: true
+        msg:
+          type: string
+          example: "Success message here"
+
+tags:
+  - name: Authentication
+    description: User authentication and login
+  - name: General CRUD
+    description: Generic CRUD operations for all tables
+  - name: Food Items
+    description: Food items management and stock calculations
+  - name: Food Stock
+    description: Food stock management and pradesh-wise analysis
+  - name: Pradesh Items
+    description: Pradesh-wise items and stock analysis
