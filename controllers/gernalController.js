@@ -660,6 +660,25 @@ export const getDefaultPradeshItems = async (req, res) => {
         return errorResponse(res, "Pradesh not found.");
       }
 
+      // Get ALL events first, so events without default stock still appear
+      const allEvents = await db.event.findAll({
+        where: { status: ["active", "inactive"] },
+        attributes: [
+          "event_id",
+          "event_name",
+          "event_desc",
+          "event_location",
+          "event_date",
+          "event_max_prasad_date",
+          "event_item_last_date",
+          "is_prasad_active",
+          "status",
+          "cdt",
+          "udt",
+        ],
+        order: [["event_id", "DESC"]],
+      });
+
       // fetch all stock records (all events)
       const stockData = await db.defaultStock.findAll({
         where: { pradesh_id },
@@ -675,52 +694,21 @@ export const getDefaultPradeshItems = async (req, res) => {
               "food_category",
             ],
           },
-          {
-            model: db.event,
-            as: "event",
-            attributes: [
-              "event_id",
-              "event_name",
-              "event_desc",
-              "event_location",
-              "event_date",
-              "event_max_prasad_date",
-              "event_item_last_date",
-              "is_prasad_active",
-              "status",
-              "cdt",
-              "udt",
-            ],
-          },
         ],
       });
 
       // Group by event_id and food_item_id
       const eventWiseTotals = {};
       stockData.forEach((record) => {
-        const eventId = record.event_id || "no_event";
-        const eventDetails = record.event || {};
+        const eventId = record.event_id;
 
         if (!eventWiseTotals[eventId]) {
-          eventWiseTotals[eventId] = {
-            event_id: eventId,
-            event_name: eventDetails.event_name || "No Event",
-            event_desc: eventDetails.event_desc || null,
-            event_location: eventDetails.event_location || null,
-            event_date: eventDetails.event_date || null,
-            event_max_prasad_date: eventDetails.event_max_prasad_date || null,
-            event_item_last_date: eventDetails.event_item_last_date || null,
-            is_prasad_active: eventDetails.is_prasad_active || false,
-            status: eventDetails.status || "inactive",
-            cdt: eventDetails.cdt || null,
-            udt: eventDetails.udt || null,
-            items: {},
-          };
+          eventWiseTotals[eventId] = {};
         }
 
         const foodItemId = record.food_item_id;
-        if (!eventWiseTotals[eventId].items[foodItemId]) {
-          eventWiseTotals[eventId].items[foodItemId] = {
+        if (!eventWiseTotals[eventId][foodItemId]) {
+          eventWiseTotals[eventId][foodItemId] = {
             id: record.id,
             food_item_id: foodItemId,
             food_eng_name: record.foodItem?.food_eng_name || "Unknown",
@@ -734,21 +722,25 @@ export const getDefaultPradeshItems = async (req, res) => {
         }
 
         const qty = parseFloat(record.food_qty || 0);
-        eventWiseTotals[eventId].items[foodItemId].total_qty += qty;
+        eventWiseTotals[eventId][foodItemId].total_qty += qty;
         if (qty > 0) {
-          eventWiseTotals[eventId].items[foodItemId].totalassigned += qty;
+          eventWiseTotals[eventId][foodItemId].totalassigned += qty;
         }
-        eventWiseTotals[eventId].items[foodItemId].stock_records_count += 1;
+        eventWiseTotals[eventId][foodItemId].stock_records_count += 1;
       });
 
-      // Convert grouped object → array and check copy status
+      // Build response with ALL events, including those with no default stock
       const eventWiseItems = await Promise.all(
-        Object.values(eventWiseTotals).map(async (event) => {
+        allEvents.map(async (event) => {
+          // Get default stock items for this event (if any)
+          const eventItems = eventWiseTotals[event.event_id] || {};
+
           // Check if all default stock items for this event+pradesh exist in foodStock
-          const defaultItemIds = Object.keys(event.items).map((id) =>
+          const defaultItemIds = Object.keys(eventItems).map((id) =>
             parseInt(id)
           );
 
+          let allItemsCopied = false;
           if (defaultItemIds.length > 0) {
             const copiedFoodStockItems = await db.foodStock.findAll({
               where: {
@@ -764,49 +756,29 @@ export const getDefaultPradeshItems = async (req, res) => {
             const copiedItemIds = copiedFoodStockItems.map(
               (item) => item.food_item_id
             );
-            const allItemsCopied = defaultItemIds.every((itemId) =>
+            allItemsCopied = defaultItemIds.every((itemId) =>
               copiedItemIds.includes(itemId)
             );
-
-            return {
-              event_id: event.event_id,
-              event_name: event.event_name,
-              event_desc: event.event_desc,
-              event_location: event.event_location,
-              event_date: event.event_date,
-              event_max_prasad_date: event.event_max_prasad_date,
-              event_item_last_date: event.event_item_last_date,
-              is_prasad_active: event.is_prasad_active,
-              status: event.status,
-              cdt: event.cdt,
-              udt: event.udt,
-              is_message: allItemsCopied,
-              items: Object.values(event.items),
-              total_items_count: Object.values(event.items).length,
-            };
-          } else {
-            return {
-              event_id: event.event_id,
-              event_name: event.event_name,
-              event_desc: event.event_desc,
-              event_location: event.event_location,
-              event_date: event.event_date,
-              event_max_prasad_date: event.event_max_prasad_date,
-              event_item_last_date: event.event_item_last_date,
-              is_prasad_active: event.is_prasad_active,
-              status: event.status,
-              cdt: event.cdt,
-              udt: event.udt,
-              is_message: false,
-              items: Object.values(event.items),
-              total_items_count: Object.values(event.items).length,
-            };
           }
+
+          return {
+            event_id: event.event_id,
+            event_name: event.event_name,
+            event_desc: event.event_desc,
+            event_location: event.event_location,
+            event_date: event.event_date,
+            event_max_prasad_date: event.event_max_prasad_date,
+            event_item_last_date: event.event_item_last_date,
+            is_prasad_active: event.is_prasad_active,
+            status: event.status,
+            cdt: event.cdt,
+            udt: event.udt,
+            is_message: allItemsCopied,
+            items: Object.values(eventItems), // Empty array if no items
+            total_items_count: Object.values(eventItems).length, // 0 if no items
+          };
         })
       );
-
-      // Sort by event_id DESC
-      eventWiseItems.sort((a, b) => b.event_id - a.event_id);
 
       successResponse(res, {
         msg: "Pradesh default stock items retrieved successfully (event-wise)",
@@ -823,6 +795,25 @@ export const getDefaultPradeshItems = async (req, res) => {
       const pradeshList = await db.pradesh.findAll({
         where: { status: "active" },
         order: [["pradesh_id", "ASC"]],
+      });
+
+      // Get ALL events first, so events without default stock still appear
+      const allEvents = await db.event.findAll({
+        where: { status: ["active", "inactive"] },
+        attributes: [
+          "event_id",
+          "event_name",
+          "event_desc",
+          "event_location",
+          "event_date",
+          "event_max_prasad_date",
+          "event_item_last_date",
+          "is_prasad_active",
+          "status",
+          "cdt",
+          "udt",
+        ],
+        order: [["event_id", "DESC"]],
       });
 
       const pradeshWithItems = await Promise.all(
@@ -860,52 +851,20 @@ export const getDefaultPradeshItems = async (req, res) => {
                   "food_category",
                 ],
               },
-              {
-                model: db.event,
-                as: "event",
-                attributes: [
-                  "event_id",
-                  "event_name",
-                  "event_desc",
-                  "event_location",
-                  "event_date",
-                  "event_max_prasad_date",
-                  "event_item_last_date",
-                  "is_prasad_active",
-                  "status",
-                  "cdt",
-                  "udt",
-                ],
-              },
             ],
           });
 
           const eventWiseTotals = {};
           stockData.forEach((record) => {
-            const eventId = record.event_id || "no_event";
-            const eventDetails = record.event || {};
+            const eventId = record.event_id;
 
             if (!eventWiseTotals[eventId]) {
-              eventWiseTotals[eventId] = {
-                event_id: eventId,
-                event_name: eventDetails.event_name || "No Event",
-                event_desc: eventDetails.event_desc || null,
-                event_location: eventDetails.event_location || null,
-                event_date: eventDetails.event_date || null,
-                event_max_prasad_date:
-                  eventDetails.event_max_prasad_date || null,
-                event_item_last_date: eventDetails.event_item_last_date || null,
-                is_prasad_active: eventDetails.is_prasad_active || false,
-                status: eventDetails.status || "inactive",
-                cdt: eventDetails.cdt || null,
-                udt: eventDetails.udt || null,
-                items: {},
-              };
+              eventWiseTotals[eventId] = {};
             }
 
             const foodItemId = record.food_item_id;
-            if (!eventWiseTotals[eventId].items[foodItemId]) {
-              eventWiseTotals[eventId].items[foodItemId] = {
+            if (!eventWiseTotals[eventId][foodItemId]) {
+              eventWiseTotals[eventId][foodItemId] = {
                 id: record.id,
                 food_item_id: foodItemId,
                 food_eng_name: record.foodItem?.food_eng_name || "Unknown",
@@ -919,20 +878,25 @@ export const getDefaultPradeshItems = async (req, res) => {
             }
 
             const qty = parseFloat(record.food_qty || 0);
-            eventWiseTotals[eventId].items[foodItemId].total_qty += qty;
+            eventWiseTotals[eventId][foodItemId].total_qty += qty;
             if (qty > 0) {
-              eventWiseTotals[eventId].items[foodItemId].totalassigned += qty;
+              eventWiseTotals[eventId][foodItemId].totalassigned += qty;
             }
-            eventWiseTotals[eventId].items[foodItemId].stock_records_count += 1;
+            eventWiseTotals[eventId][foodItemId].stock_records_count += 1;
           });
 
+          // Build events array with ALL events
           const eventWiseItems = await Promise.all(
-            Object.values(eventWiseTotals).map(async (event) => {
+            allEvents.map(async (event) => {
+              // Get default stock items for this event (if any)
+              const eventItems = eventWiseTotals[event.event_id] || {};
+
               // Check if all default stock items for this event+pradesh exist in foodStock
-              const defaultItemIds = Object.keys(event.items).map((id) =>
+              const defaultItemIds = Object.keys(eventItems).map((id) =>
                 parseInt(id)
               );
 
+              let allItemsCopied = false;
               if (defaultItemIds.length > 0) {
                 const copiedFoodStockItems = await db.foodStock.findAll({
                   where: {
@@ -948,49 +912,29 @@ export const getDefaultPradeshItems = async (req, res) => {
                 const copiedItemIds = copiedFoodStockItems.map(
                   (item) => item.food_item_id
                 );
-                const allItemsCopied = defaultItemIds.every((itemId) =>
+                allItemsCopied = defaultItemIds.every((itemId) =>
                   copiedItemIds.includes(itemId)
                 );
-
-                return {
-                  event_id: event.event_id,
-                  event_name: event.event_name,
-                  event_desc: event.event_desc,
-                  event_location: event.event_location,
-                  event_date: event.event_date,
-                  event_max_prasad_date: event.event_max_prasad_date,
-                  event_item_last_date: event.event_item_last_date,
-                  is_prasad_active: event.is_prasad_active,
-                  status: event.status,
-                  cdt: event.cdt,
-                  udt: event.udt,
-                  is_message: allItemsCopied,
-                  items: Object.values(event.items),
-                  total_items_count: Object.values(event.items).length,
-                };
-              } else {
-                return {
-                  event_id: event.event_id,
-                  event_name: event.event_name,
-                  event_desc: event.event_desc,
-                  event_location: event.event_location,
-                  event_date: event.event_date,
-                  event_max_prasad_date: event.event_max_prasad_date,
-                  event_item_last_date: event.event_item_last_date,
-                  is_prasad_active: event.is_prasad_active,
-                  status: event.status,
-                  cdt: event.cdt,
-                  udt: event.udt,
-                  is_message: false,
-                  items: Object.values(event.items),
-                  total_items_count: Object.values(event.items).length,
-                };
               }
+
+              return {
+                event_id: event.event_id,
+                event_name: event.event_name,
+                event_desc: event.event_desc,
+                event_location: event.event_location,
+                event_date: event.event_date,
+                event_max_prasad_date: event.event_max_prasad_date,
+                event_item_last_date: event.event_item_last_date,
+                is_prasad_active: event.is_prasad_active,
+                status: event.status,
+                cdt: event.cdt,
+                udt: event.udt,
+                is_message: allItemsCopied,
+                items: Object.values(eventItems), // Empty array if no items
+                total_items_count: Object.values(eventItems).length, // 0 if no items
+              };
             })
           );
-
-          // Sort by event_id DESC
-          eventWiseItems.sort((a, b) => b.event_id - a.event_id);
 
           return {
             pradesh_id: pradesh.pradesh_id,
