@@ -533,15 +533,16 @@ export const getPradeshItems = async (req, res) => {
         ),
       ];
 
-      const allUsers = allUserIds.length
-        ? await db.user.findAll({
-            where: { user_id: { [db.Sequelize.Op.in]: allUserIds } },
-          })
-        : [];
-
-      // One aggregate query covering every pradesh / event / item combination
-      const [stockRows] = await db.sequelize.query(
-        `SELECT s.pradesh_id, s.event_id, s.food_item_id,
+      // These three are independent, so run them in one round trip
+      // instead of three sequential ones.
+      const [allUsers, [stockRows], allPrasadStock] = await Promise.all([
+        allUserIds.length
+          ? db.user.findAll({
+              where: { user_id: { [db.Sequelize.Op.in]: allUserIds } },
+            })
+          : [],
+        db.sequelize.query(
+          `SELECT s.pradesh_id, s.event_id, s.food_item_id,
                 f.food_eng_name, f.food_guj_name, f.food_unit, f.food_category,
                 SUM(s.food_qty)                                          AS total_qty,
                 SUM(CASE WHEN s.food_qty > 0 THEN s.food_qty ELSE 0 END) AS totalassigned,
@@ -550,7 +551,9 @@ export const getPradeshItems = async (req, res) => {
          LEFT JOIN food_items f ON f.food_item_id = s.food_item_id
          GROUP BY s.pradesh_id, s.event_id, s.food_item_id,
                   f.food_eng_name, f.food_guj_name, f.food_unit, f.food_category`
-      );
+        ),
+        db.prasadStock.findAll({ order: [["id", "ASC"]] }),
+      ]);
 
       const stockByPradeshEvent = {};
       stockRows.forEach((row) => {
@@ -572,11 +575,7 @@ export const getPradeshItems = async (req, res) => {
         };
       });
 
-      // One query for every prasad stock row, keyed by pradesh+event
-      const allPrasadStock = await db.prasadStock.findAll({
-        order: [["id", "ASC"]],
-      });
-
+      // Index every prasad stock row by pradesh+event
       const prasadByPradeshEvent = {};
       allPrasadStock.forEach((row) => {
         const key = `${row.pradesh_id}:${row.event_id}`;
@@ -826,16 +825,17 @@ export const getDefaultPradeshItems = async (req, res) => {
         ),
       ];
 
-      const allUsers = allUserIds.length
-        ? await db.user.findAll({
-            where: { user_id: { [db.Sequelize.Op.in]: allUserIds } },
-          })
-        : [];
-
-      // One aggregate query covering every pradesh / event / item combination.
+      // These three are independent, so run them in one round trip
+      // instead of three sequential ones.
       // MIN(id) mirrors the previous "first record wins" behaviour.
-      const [defaultRows] = await db.sequelize.query(
-        `SELECT d.pradesh_id, d.event_id, d.food_item_id, MIN(d.id) AS id,
+      const [allUsers, [defaultRows], [copiedRows]] = await Promise.all([
+        allUserIds.length
+          ? db.user.findAll({
+              where: { user_id: { [db.Sequelize.Op.in]: allUserIds } },
+            })
+          : [],
+        db.sequelize.query(
+          `SELECT d.pradesh_id, d.event_id, d.food_item_id, MIN(d.id) AS id,
                 f.food_eng_name, f.food_guj_name, f.food_unit, f.food_category,
                 SUM(d.food_qty)                                          AS total_qty,
                 SUM(CASE WHEN d.food_qty > 0 THEN d.food_qty ELSE 0 END) AS totalassigned,
@@ -844,7 +844,11 @@ export const getDefaultPradeshItems = async (req, res) => {
          LEFT JOIN food_items f ON f.food_item_id = d.food_item_id
          GROUP BY d.pradesh_id, d.event_id, d.food_item_id,
                   f.food_eng_name, f.food_guj_name, f.food_unit, f.food_category`
-      );
+        ),
+        db.sequelize.query(
+          `SELECT DISTINCT pradesh_id, event_id, food_item_id FROM food_stock`
+        ),
+      ]);
 
       const defaultByPradeshEvent = {};
       defaultRows.forEach((row) => {
@@ -868,11 +872,7 @@ export const getDefaultPradeshItems = async (req, res) => {
           };
       });
 
-      // One query listing which items already exist in food_stock
-      const [copiedRows] = await db.sequelize.query(
-        `SELECT DISTINCT pradesh_id, event_id, food_item_id FROM food_stock`
-      );
-
+      // Index which items already exist in food_stock
       const copiedByPradeshEvent = {};
       copiedRows.forEach((row) => {
         const key = `${row.pradesh_id}:${row.event_id}`;
