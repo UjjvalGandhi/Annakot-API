@@ -12,10 +12,14 @@ const dbConfig = {
   dialect: process.env.DB_DIALECT,
   port: process.env.DB_PORT,
   pool: {
-    max: 5,
-    min: 0,
+    max: 10,
+    // Keep connections warm. Opening a new one costs a TLS handshake plus
+    // auth against Supabase (~1.5-2s from here), so idling them out after
+    // 10s meant nearly every request paid that cost.
+    min: 2,
     acquire: 30000,
-    idle: 10000,
+    idle: 300000,
+    evict: 600000,
   },
   ssl: process.env.DB_SSL === 'true',
 };

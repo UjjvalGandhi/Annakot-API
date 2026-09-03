@@ -19,8 +19,11 @@ const sequelize = new Sequelize(dbConfig.DB, dbConfig.USER, dbConfig.PASSWORD, {
           require: true,
           rejectUnauthorized: false,
         },
+        // Pooled connections are now held for minutes; keep-alive stops
+        // idle TCP being dropped silently in between.
+        keepAlive: true,
       }
-    : {},
+    : { keepAlive: true },
   pool: {
     max: dbConfig.pool.max,
     min: dbConfig.pool.min,
