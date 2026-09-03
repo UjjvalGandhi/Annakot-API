@@ -186,39 +186,46 @@ export const getItem = async (req, res) => {
         ],
       });
 
-      const itemsWithTotalQty = await Promise.all(
-        foodItems.map(async (item) => {
-          let stockWhereClause = { food_item_id: item.food_item_id };
-
-          if (event_id) {
-            stockWhereClause.event_id = event_id;
-          }
-
-          const stockData = await db.foodStock.findAll({
-            where: stockWhereClause,
-            attributes: ["food_qty"],
-          });
-
-          const totalQty = stockData.reduce((sum, record) => {
-            return sum + parseFloat(record.food_qty || 0);
-          }, 0);
-
-          return {
-            food_item_id: item.food_item_id,
-            food_eng_name: item.food_eng_name,
-            food_guj_name: item.food_guj_name,
-            food_unit: item.food_unit,
-            food_image_url: item.food_image_url,
-            food_category: item.food_category,
-            food_remark: item.food_remark,
-            status: item.status,
-            cdt: item.cdt,
-            udt: item.udt,
-            total_qty: totalQty,
-            stock_records_count: stockData.length,
-          };
-        })
+      // Single aggregate query instead of one stock lookup per food item
+      const [stockTotals] = await db.sequelize.query(
+        `SELECT food_item_id,
+                COALESCE(SUM(food_qty), 0) AS total_qty,
+                COUNT(*)                   AS stock_records_count
+         FROM food_stock
+         ${event_id ? "WHERE event_id = :event_id" : ""}
+         GROUP BY food_item_id`,
+        { replacements: event_id ? { event_id } : {} }
       );
+
+      const totalsByItem = {};
+      stockTotals.forEach((row) => {
+        totalsByItem[row.food_item_id] = {
+          total_qty: parseFloat(row.total_qty) || 0,
+          stock_records_count: parseInt(row.stock_records_count, 10) || 0,
+        };
+      });
+
+      const itemsWithTotalQty = foodItems.map((item) => {
+        const totals = totalsByItem[item.food_item_id] || {
+          total_qty: 0,
+          stock_records_count: 0,
+        };
+
+        return {
+          food_item_id: item.food_item_id,
+          food_eng_name: item.food_eng_name,
+          food_guj_name: item.food_guj_name,
+          food_unit: item.food_unit,
+          food_image_url: item.food_image_url,
+          food_category: item.food_category,
+          food_remark: item.food_remark,
+          status: item.status,
+          cdt: item.cdt,
+          udt: item.udt,
+          total_qty: totals.total_qty,
+          stock_records_count: totals.stock_records_count,
+        };
+      });
 
       successResponse(res, {
         msg: "All food items with total quantities retrieved successfully",
@@ -307,61 +314,52 @@ export const getItemStock = async (req, res) => {
         ],
       });
 
-      const itemsWithPradeshStock = await Promise.all(
-        foodItems.map(async (item) => {
-          let stockWhereClause = { food_item_id: item.food_item_id };
-
-          if (event_id) {
-            stockWhereClause.event_id = event_id;
-          }
-
-          const stockData = await db.foodStock.findAll({
-            where: stockWhereClause,
-            attributes: ["pradesh_id", "food_qty"],
-            include: [
-              {
-                model: db.pradesh,
-                as: "pradesh",
-                attributes: ["pradesh_eng_name", "pradesh_guj_name"],
-              },
-            ],
-          });
-
-          // Group by pradesh_id and calculate totals
-          const pradeshTotals = {};
-          stockData.forEach((record) => {
-            const pradeshId = record.pradesh_id;
-            if (!pradeshTotals[pradeshId]) {
-              pradeshTotals[pradeshId] = {
-                pradesh_id: pradeshId,
-                pradesh_eng_name: record.pradesh?.pradesh_eng_name || "Unknown",
-                pradesh_guj_name: record.pradesh?.pradesh_guj_name || "Unknown",
-                total_qty: 0,
-                totalassigned: 0,
-                stock_records_count: 0,
-              };
-            }
-            const qty = parseFloat(record.food_qty || 0);
-            pradeshTotals[pradeshId].total_qty += qty;
-            if (qty > 0) {
-              pradeshTotals[pradeshId].totalassigned += qty;
-            }
-            pradeshTotals[pradeshId].stock_records_count += 1;
-          });
-
-          const pradeshStockData = Object.values(pradeshTotals);
-
-          return {
-            food_item_id: item.food_item_id,
-            food_eng_name: item.food_eng_name,
-            food_guj_name: item.food_guj_name,
-            food_unit: item.food_unit,
-            food_category: item.food_category,
-            pradesh_stock: pradeshStockData,
-            total_pradesh_count: pradeshStockData.length,
-          };
-        })
+      // Single aggregate query instead of one stock lookup per food item
+      const [pradeshRows] = await db.sequelize.query(
+        `SELECT s.food_item_id,
+                s.pradesh_id,
+                p.pradesh_eng_name,
+                p.pradesh_guj_name,
+                SUM(s.food_qty)                                      AS total_qty,
+                SUM(CASE WHEN s.food_qty > 0 THEN s.food_qty ELSE 0 END) AS totalassigned,
+                COUNT(*)                                             AS stock_records_count
+         FROM food_stock s
+         LEFT JOIN pradesh p ON p.pradesh_id = s.pradesh_id
+         ${event_id ? "WHERE s.event_id = :event_id" : ""}
+         GROUP BY s.food_item_id, s.pradesh_id, p.pradesh_eng_name, p.pradesh_guj_name
+         ORDER BY s.food_item_id, s.pradesh_id`,
+        { replacements: event_id ? { event_id } : {} }
       );
+
+      // Bucket the aggregated rows by food_item_id
+      const pradeshStockByItem = {};
+      pradeshRows.forEach((row) => {
+        if (!pradeshStockByItem[row.food_item_id]) {
+          pradeshStockByItem[row.food_item_id] = [];
+        }
+        pradeshStockByItem[row.food_item_id].push({
+          pradesh_id: row.pradesh_id,
+          pradesh_eng_name: row.pradesh_eng_name || "Unknown",
+          pradesh_guj_name: row.pradesh_guj_name || "Unknown",
+          total_qty: parseFloat(row.total_qty) || 0,
+          totalassigned: parseFloat(row.totalassigned) || 0,
+          stock_records_count: parseInt(row.stock_records_count, 10) || 0,
+        });
+      });
+
+      const itemsWithPradeshStock = foodItems.map((item) => {
+        const pradeshStockData = pradeshStockByItem[item.food_item_id] || [];
+
+        return {
+          food_item_id: item.food_item_id,
+          food_eng_name: item.food_eng_name,
+          food_guj_name: item.food_guj_name,
+          food_unit: item.food_unit,
+          food_category: item.food_category,
+          pradesh_stock: pradeshStockData,
+          total_pradesh_count: pradeshStockData.length,
+        };
+      });
 
       successResponse(res, {
         msg: "All food items with pradesh-wise stock totals retrieved successfully",
@@ -523,119 +521,119 @@ export const getPradeshItems = async (req, res) => {
         order: [["event_id", "DESC"]],
       });
 
-      const pradeshWithItems = await Promise.all(
-        pradeshList.map(async (pradesh) => {
-          // Get pradesh users by splitting comma-separated user_ids
-          let pradeshUsers = [];
-          if (pradesh.user_ids) {
-            const userIds = pradesh.user_ids
+      // Fetch the users for every pradesh in a single query
+      const allUserIds = [
+        ...new Set(
+          pradeshList.flatMap((p) =>
+            (p.user_ids || "")
               .split(",")
               .map((id) => parseInt(id.trim()))
-              .filter((id) => !isNaN(id));
+              .filter((id) => !isNaN(id))
+          )
+        ),
+      ];
 
-            if (userIds.length > 0) {
-              pradeshUsers = await db.user.findAll({
-                where: {
-                  user_id: {
-                    [db.Sequelize.Op.in]: userIds,
-                  },
-                },
-              });
-            }
-          }
+      const allUsers = allUserIds.length
+        ? await db.user.findAll({
+            where: { user_id: { [db.Sequelize.Op.in]: allUserIds } },
+          })
+        : [];
 
-          // Get stock data for this pradesh
-          const stockData = await db.foodStock.findAll({
-            where: { pradesh_id: pradesh.pradesh_id },
-            attributes: ["event_id", "food_item_id", "food_qty"],
-            include: [
-              {
-                model: db.foodItems,
-                as: "foodItem",
-                attributes: [
-                  "food_eng_name",
-                  "food_guj_name",
-                  "food_unit",
-                  "food_category",
-                ],
-              },
-            ],
-          });
+      // One aggregate query covering every pradesh / event / item combination
+      const [stockRows] = await db.sequelize.query(
+        `SELECT s.pradesh_id, s.event_id, s.food_item_id,
+                f.food_eng_name, f.food_guj_name, f.food_unit, f.food_category,
+                SUM(s.food_qty)                                          AS total_qty,
+                SUM(CASE WHEN s.food_qty > 0 THEN s.food_qty ELSE 0 END) AS totalassigned,
+                COUNT(*)                                                 AS stock_records_count
+         FROM food_stock s
+         LEFT JOIN food_items f ON f.food_item_id = s.food_item_id
+         GROUP BY s.pradesh_id, s.event_id, s.food_item_id,
+                  f.food_eng_name, f.food_guj_name, f.food_unit, f.food_category`
+      );
 
-          // Group stock data by event_id and food_item_id
-          const eventWiseStockTotals = {};
-          stockData.forEach((record) => {
-            const eventId = record.event_id;
+      const stockByPradeshEvent = {};
+      stockRows.forEach((row) => {
+        if (!stockByPradeshEvent[row.pradesh_id]) {
+          stockByPradeshEvent[row.pradesh_id] = {};
+        }
+        if (!stockByPradeshEvent[row.pradesh_id][row.event_id]) {
+          stockByPradeshEvent[row.pradesh_id][row.event_id] = {};
+        }
+        stockByPradeshEvent[row.pradesh_id][row.event_id][row.food_item_id] = {
+          food_item_id: row.food_item_id,
+          food_eng_name: row.food_eng_name || "Unknown",
+          food_guj_name: row.food_guj_name || "Unknown",
+          food_unit: row.food_unit || "Unknown",
+          food_category: row.food_category || "Unknown",
+          total_qty: parseFloat(row.total_qty) || 0,
+          totalassigned: parseFloat(row.totalassigned) || 0,
+          stock_records_count: parseInt(row.stock_records_count, 10) || 0,
+        };
+      });
 
-            if (!eventWiseStockTotals[eventId]) {
-              eventWiseStockTotals[eventId] = {};
-            }
+      // One query for every prasad stock row, keyed by pradesh+event
+      const allPrasadStock = await db.prasadStock.findAll({
+        order: [["id", "ASC"]],
+      });
 
-            const foodItemId = record.food_item_id;
-            if (!eventWiseStockTotals[eventId][foodItemId]) {
-              eventWiseStockTotals[eventId][foodItemId] = {
-                food_item_id: foodItemId,
-                food_eng_name: record.foodItem?.food_eng_name || "Unknown",
-                food_guj_name: record.foodItem?.food_guj_name || "Unknown",
-                food_unit: record.foodItem?.food_unit || "Unknown",
-                food_category: record.foodItem?.food_category || "Unknown",
-                total_qty: 0,
-                totalassigned: 0,
-                stock_records_count: 0,
-              };
-            }
+      const prasadByPradeshEvent = {};
+      allPrasadStock.forEach((row) => {
+        const key = `${row.pradesh_id}:${row.event_id}`;
+        if (!prasadByPradeshEvent[key]) {
+          prasadByPradeshEvent[key] = row;
+        }
+      });
 
-            const qty = parseFloat(record.food_qty || 0);
-            eventWiseStockTotals[eventId][foodItemId].total_qty += qty;
-            if (qty > 0) {
-              eventWiseStockTotals[eventId][foodItemId].totalassigned += qty;
-            }
-            eventWiseStockTotals[eventId][foodItemId].stock_records_count += 1;
-          });
+      const pradeshWithItems = pradeshList.map((pradesh) => {
+        // Get pradesh users by splitting comma-separated user_ids
+        const userIds = (pradesh.user_ids || "")
+          .split(",")
+          .map((id) => parseInt(id.trim()))
+          .filter((id) => !isNaN(id));
 
-          // Build events array with ALL events
-          const eventWiseItems = await Promise.all(
-            allEvents.map(async (event) => {
-              // Get stock items for this event (if any)
-              const eventItems = eventWiseStockTotals[event.event_id] || {};
+        const pradeshUsers = userIds.length
+          ? allUsers.filter((u) => userIds.includes(u.user_id))
+          : [];
 
-              // Fetch prasadStock for this event+pradesh
-              const prasadStock = await db.prasadStock.findOne({
-                where: {
-                  event_id: event.event_id,
-                  pradesh_id: pradesh.pradesh_id,
-                },
-              });
+        const pradeshStock = stockByPradeshEvent[pradesh.pradesh_id] || {};
 
-              return {
-                event_id: event.event_id,
-                event_name: event.event_name,
-                event_desc: event.event_desc,
-                event_location: event.event_location,
-                event_date: event.event_date,
-                event_max_prasad_date: event.event_max_prasad_date,
-                event_item_last_date: event.event_item_last_date,
-                is_prasad_active: event.is_prasad_active,
-                status: event.status,
-                cdt: event.cdt,
-                udt: event.udt,
-                prasadStock: prasadStock || null,
-                items: Object.values(eventItems), // Empty array if no items
-                total_items_count: Object.values(eventItems).length, // 0 if no items
-              };
-            })
-          );
+        // Build events array with ALL events
+        const eventWiseItems = allEvents.map((event) => {
+          // Get stock items for this event (if any)
+          const eventItems = pradeshStock[event.event_id] || {};
+
+          const prasadStock =
+            prasadByPradeshEvent[`${pradesh.pradesh_id}:${event.event_id}`] ||
+            null;
 
           return {
-            pradesh_id: pradesh.pradesh_id,
-            pradesh_eng_name: pradesh.pradesh_eng_name,
-            pradesh_guj_name: pradesh.pradesh_guj_name,
-            status: pradesh.status,
-            pradeshUsers,
-            events: eventWiseItems,
+            event_id: event.event_id,
+            event_name: event.event_name,
+            event_desc: event.event_desc,
+            event_location: event.event_location,
+            event_date: event.event_date,
+            event_max_prasad_date: event.event_max_prasad_date,
+            event_item_last_date: event.event_item_last_date,
+            is_prasad_active: event.is_prasad_active,
+            status: event.status,
+            cdt: event.cdt,
+            udt: event.udt,
+            prasadStock: prasadStock || null,
+            items: Object.values(eventItems), // Empty array if no items
+            total_items_count: Object.values(eventItems).length, // 0 if no items
           };
-        })
-      );
+        });
+
+        return {
+          pradesh_id: pradesh.pradesh_id,
+          pradesh_eng_name: pradesh.pradesh_eng_name,
+          pradesh_guj_name: pradesh.pradesh_guj_name,
+          status: pradesh.status,
+          pradeshUsers,
+          events: eventWiseItems,
+        };
+      });
 
       successResponse(res, {
         msg: "All pradesh with items and stock totals retrieved successfully (event-wise)",
@@ -816,136 +814,136 @@ export const getDefaultPradeshItems = async (req, res) => {
         order: [["event_id", "DESC"]],
       });
 
-      const pradeshWithItems = await Promise.all(
-        pradeshList.map(async (pradesh) => {
-          // Get pradesh users by splitting comma-separated user_ids
-          let pradeshUsers = [];
-          if (pradesh.user_ids) {
-            const userIds = pradesh.user_ids
+      // Fetch the users for every pradesh in a single query
+      const allUserIds = [
+        ...new Set(
+          pradeshList.flatMap((p) =>
+            (p.user_ids || "")
               .split(",")
               .map((id) => parseInt(id.trim()))
-              .filter((id) => !isNaN(id));
+              .filter((id) => !isNaN(id))
+          )
+        ),
+      ];
 
-            if (userIds.length > 0) {
-              pradeshUsers = await db.user.findAll({
-                where: {
-                  user_id: {
-                    [db.Sequelize.Op.in]: userIds,
-                  },
-                },
-              });
-            }
-          }
+      const allUsers = allUserIds.length
+        ? await db.user.findAll({
+            where: { user_id: { [db.Sequelize.Op.in]: allUserIds } },
+          })
+        : [];
 
-          const stockData = await db.defaultStock.findAll({
-            where: { pradesh_id: pradesh.pradesh_id },
-            attributes: ["id", "event_id", "food_item_id", "food_qty"],
-            include: [
-              {
-                model: db.foodItems,
-                as: "foodItem",
-                attributes: [
-                  "food_eng_name",
-                  "food_guj_name",
-                  "food_unit",
-                  "food_category",
-                ],
-              },
-            ],
-          });
+      // One aggregate query covering every pradesh / event / item combination.
+      // MIN(id) mirrors the previous "first record wins" behaviour.
+      const [defaultRows] = await db.sequelize.query(
+        `SELECT d.pradesh_id, d.event_id, d.food_item_id, MIN(d.id) AS id,
+                f.food_eng_name, f.food_guj_name, f.food_unit, f.food_category,
+                SUM(d.food_qty)                                          AS total_qty,
+                SUM(CASE WHEN d.food_qty > 0 THEN d.food_qty ELSE 0 END) AS totalassigned,
+                COUNT(*)                                                 AS stock_records_count
+         FROM default_stock d
+         LEFT JOIN food_items f ON f.food_item_id = d.food_item_id
+         GROUP BY d.pradesh_id, d.event_id, d.food_item_id,
+                  f.food_eng_name, f.food_guj_name, f.food_unit, f.food_category`
+      );
 
-          const eventWiseTotals = {};
-          stockData.forEach((record) => {
-            const eventId = record.event_id;
+      const defaultByPradeshEvent = {};
+      defaultRows.forEach((row) => {
+        if (!defaultByPradeshEvent[row.pradesh_id]) {
+          defaultByPradeshEvent[row.pradesh_id] = {};
+        }
+        if (!defaultByPradeshEvent[row.pradesh_id][row.event_id]) {
+          defaultByPradeshEvent[row.pradesh_id][row.event_id] = {};
+        }
+        defaultByPradeshEvent[row.pradesh_id][row.event_id][row.food_item_id] =
+          {
+            id: parseInt(row.id, 10),
+            food_item_id: row.food_item_id,
+            food_eng_name: row.food_eng_name || "Unknown",
+            food_guj_name: row.food_guj_name || "Unknown",
+            food_unit: row.food_unit || "Unknown",
+            food_category: row.food_category || "Unknown",
+            total_qty: parseFloat(row.total_qty) || 0,
+            totalassigned: parseFloat(row.totalassigned) || 0,
+            stock_records_count: parseInt(row.stock_records_count, 10) || 0,
+          };
+      });
 
-            if (!eventWiseTotals[eventId]) {
-              eventWiseTotals[eventId] = {};
-            }
+      // One query listing which items already exist in food_stock
+      const [copiedRows] = await db.sequelize.query(
+        `SELECT DISTINCT pradesh_id, event_id, food_item_id FROM food_stock`
+      );
 
-            const foodItemId = record.food_item_id;
-            if (!eventWiseTotals[eventId][foodItemId]) {
-              eventWiseTotals[eventId][foodItemId] = {
-                id: record.id,
-                food_item_id: foodItemId,
-                food_eng_name: record.foodItem?.food_eng_name || "Unknown",
-                food_guj_name: record.foodItem?.food_guj_name || "Unknown",
-                food_unit: record.foodItem?.food_unit || "Unknown",
-                food_category: record.foodItem?.food_category || "Unknown",
-                total_qty: 0,
-                totalassigned: 0,
-                stock_records_count: 0,
-              };
-            }
+      const copiedByPradeshEvent = {};
+      copiedRows.forEach((row) => {
+        const key = `${row.pradesh_id}:${row.event_id}`;
+        if (!copiedByPradeshEvent[key]) {
+          copiedByPradeshEvent[key] = new Set();
+        }
+        copiedByPradeshEvent[key].add(row.food_item_id);
+      });
 
-            const qty = parseFloat(record.food_qty || 0);
-            eventWiseTotals[eventId][foodItemId].total_qty += qty;
-            if (qty > 0) {
-              eventWiseTotals[eventId][foodItemId].totalassigned += qty;
-            }
-            eventWiseTotals[eventId][foodItemId].stock_records_count += 1;
-          });
+      const pradeshWithItems = pradeshList.map((pradesh) => {
+        // Get pradesh users by splitting comma-separated user_ids
+        const userIds = (pradesh.user_ids || "")
+          .split(",")
+          .map((id) => parseInt(id.trim()))
+          .filter((id) => !isNaN(id));
 
-          // Build events array with ALL events
-          const eventWiseItems = await Promise.all(
-            allEvents.map(async (event) => {
-              // Get default stock items for this event (if any)
-              const eventItems = eventWiseTotals[event.event_id] || {};
+        const pradeshUsers = userIds.length
+          ? allUsers.filter((u) => userIds.includes(u.user_id))
+          : [];
 
-              // Check if all default stock items for this event+pradesh exist in foodStock
-              const defaultItemIds = Object.keys(eventItems).map((id) =>
-                parseInt(id)
-              );
+        const pradeshDefaults =
+          defaultByPradeshEvent[pradesh.pradesh_id] || {};
 
-              let allItemsCopied = false;
-              if (defaultItemIds.length > 0) {
-                const copiedFoodStockItems = await db.foodStock.findAll({
-                  where: {
-                    pradesh_id: pradesh.pradesh_id,
-                    event_id: event.event_id,
-                    food_item_id: {
-                      [db.Sequelize.Op.in]: defaultItemIds,
-                    },
-                  },
-                  attributes: ["food_item_id"],
-                });
+        // Build events array with ALL events
+        const eventWiseItems = allEvents.map((event) => {
+          // Get default stock items for this event (if any)
+          const eventItems = pradeshDefaults[event.event_id] || {};
 
-                const copiedItemIds = copiedFoodStockItems.map(
-                  (item) => item.food_item_id
-                );
-                allItemsCopied = defaultItemIds.every((itemId) =>
-                  copiedItemIds.includes(itemId)
-                );
-              }
-
-              return {
-                event_id: event.event_id,
-                event_name: event.event_name,
-                event_desc: event.event_desc,
-                event_location: event.event_location,
-                event_date: event.event_date,
-                event_max_prasad_date: event.event_max_prasad_date,
-                event_item_last_date: event.event_item_last_date,
-                is_prasad_active: event.is_prasad_active,
-                status: event.status,
-                cdt: event.cdt,
-                udt: event.udt,
-                is_message: allItemsCopied,
-                items: Object.values(eventItems), // Empty array if no items
-                total_items_count: Object.values(eventItems).length, // 0 if no items
-              };
-            })
+          // Check if all default stock items for this event+pradesh exist in foodStock
+          const defaultItemIds = Object.keys(eventItems).map((id) =>
+            parseInt(id)
           );
 
+          let allItemsCopied = false;
+          if (defaultItemIds.length > 0) {
+            const copiedItemIds =
+              copiedByPradeshEvent[
+                `${pradesh.pradesh_id}:${event.event_id}`
+              ] || new Set();
+            allItemsCopied = defaultItemIds.every((itemId) =>
+              copiedItemIds.has(itemId)
+            );
+          }
+
           return {
-            pradesh_id: pradesh.pradesh_id,
-            pradesh_eng_name: pradesh.pradesh_eng_name,
-            pradesh_guj_name: pradesh.pradesh_guj_name,
-            status: pradesh.status,
-            pradeshUsers,
-            events: eventWiseItems,
+            event_id: event.event_id,
+            event_name: event.event_name,
+            event_desc: event.event_desc,
+            event_location: event.event_location,
+            event_date: event.event_date,
+            event_max_prasad_date: event.event_max_prasad_date,
+            event_item_last_date: event.event_item_last_date,
+            is_prasad_active: event.is_prasad_active,
+            status: event.status,
+            cdt: event.cdt,
+            udt: event.udt,
+            is_message: allItemsCopied,
+            items: Object.values(eventItems), // Empty array if no items
+            total_items_count: Object.values(eventItems).length, // 0 if no items
           };
-        })
-      );
+        });
+
+        return {
+          pradesh_id: pradesh.pradesh_id,
+          pradesh_eng_name: pradesh.pradesh_eng_name,
+          pradesh_guj_name: pradesh.pradesh_guj_name,
+          status: pradesh.status,
+          pradeshUsers,
+          events: eventWiseItems,
+        };
+      });
 
       successResponse(res, {
         msg: "All pradesh with default stock items retrieved successfully (event-wise)",
